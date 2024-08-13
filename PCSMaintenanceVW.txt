@@ -1,0 +1,394 @@
+LABEL 'Start - Radio Form'
+SET copyFlag TO $'''down'''
+Variables.CreateNewList List=> CopiedTextList
+LOOP WHILE (copyFlag) = ($'''down''')
+    LABEL 'Start - Loop'
+    **REGION buffer of copied text
+    MouseAndKeyboard.WaitForShortcutKey.WaitForShortcutKey InputKeys: ['Ctrl+C'] IndexOfShortcutKeyPressed=> IndexOfShortcutKeyPressed
+    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Control}({C})''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: True
+    WAIT 0.75
+    Clipboard.GetText Text=> ClipboardText
+    Variables.AddItemToList Item: ClipboardText List: CopiedTextList
+    Display.ShowMessageDialog.ShowMessage Title: $'''Are you done?''' Message: $'''%CopiedTextList%
+%CopiedTextList[CopiedTextList.Count - 1]% was added!
+____________________________________________________
+
+Click Yes to Insert the above list into PCS Tables
+Click No to Continue adding more options
+Click Cancel to Remove Last Option from List
+
+
+
+''' Icon: Display.Icon.None Buttons: Display.Buttons.YesNoCancel DefaultButton: Display.DefaultButton.Button2 IsTopMost: True ButtonPressed=> NotificationButton
+    **ENDREGION
+    LABEL 'Button If'
+    IF NotificationButton = $'''Cancel''' THEN
+        Variables.RemoveItemFromList.RemoveItemFromListByIndex ItemIndex: CopiedTextList.Count - 1 List: CopiedTextList
+        Display.ShowMessageDialog.ShowMessage Title: $'''Removed Pricing and Option from List''' Message: $'''%CopiedTextList%
+____________________________________________________
+
+Click Yes to Insert the above list into PCS Tables
+Click No to Continue adding more options
+Click Cancel to Remove Last Option from List
+
+
+
+
+''' Icon: Display.Icon.None Buttons: Display.Buttons.YesNoCancel DefaultButton: Display.DefaultButton.Button2 IsTopMost: True ButtonPressed=> NotificationButton
+        GOTO 'Button If'
+    ELSE IF NotificationButton = $'''No''' THEN
+        GOTO 'Start - Loop'
+    ELSE
+        @@statistics_Input_Toggle: '2'
+@@statistics_Action_Submit: '2'
+Display.ShowCustomDialog CardTemplateJson: '''{
+  \"type\": \"AdaptiveCard\",
+  \"version\": \"1.4\",
+  \"id\": \"AdaptiveCard\",
+  \"body\": [
+    {
+      \"type\": \"Input.Toggle\",
+      \"id\": \"price\",
+      \"title\": \"${price_Title}\",
+      \"valueOn\": \"${price_ValueOn}\",
+      \"valueOff\": \"${price_ValueOff}\",
+      \"label\": \"${price_Label}\"
+    },
+    {
+      \"type\": \"Input.Toggle\",
+      \"id\": \"model\",
+      \"title\": \"${model_Title}\",
+      \"valueOn\": \"${model_ValueOn}\",
+      \"valueOff\": \"${model_ValueOff}\"
+    }
+  ],
+  \"actions\": [
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"submit\",
+      \"title\": \"${submit_Title}\"
+    },
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"cancel\",
+      \"associatedInputs\": \"none\",
+      \"title\": \"${cancel_Title}\",
+      \"IsCancel\": true
+    }
+  ]
+}''' CustomFormData=> RadioSelectionForm ButtonPressed=> RadioFormButton @price_Label: $'''Is This a Price Update or Model Setup?''' @price_Title: $'''Price Update - No Comparison, Only Input''' @price_ValueOn: $'''True''' @price_ValueOff: $'''False''' @model_Title: $'''Model Setup - Compare Previous Record Before Input''' @model_ValueOn: $'''True''' @model_ValueOff: $'''False''' @submit_Title: $'''Submit''' @cancel_Title: $'''Cancel'''
+        IF RadioFormButton = $'''cancel''' THEN
+            EXIT Code: 0
+        END
+        Variables.CreateNewDatatable InputTable: { ^['Invoice', 'MSRP', 'Option'], [$'''''', $'''''', $''''''] } DataTable=> ErrorTable
+        Variables.DeleteRowFromDataTable DataTable: ErrorTable RowIndex: 0
+        Variables.CreateNewList List=> ErrorDisplayList
+        SET CopiedTextListCount TO 0
+        **REGION regex prep
+        LOOP FOREACH CurrentString IN CopiedTextList
+            Text.ParseText.RegexParse Text: CurrentString TextToFind: $'''\\d{1,3}(?:,\\d{3})*''' StartingPosition: 0 IgnoreCase: False OccurrencePositions=> Positions2 Matches=> RegexPricing
+            Text.ParseText.RegexParseForFirstOccurrence Text: CurrentString TextToFind: $'''\\b(?!\\$?\\d{3}\\b)[A-Za-z0-9]{3,4}''' StartingPosition: 0 IgnoreCase: False OccurrencePosition=> Position Match=> RegexOptionCode
+            Text.ParseText.RegexParse Text: CurrentString TextToFind: $'''N\\/C''' StartingPosition: 0 IgnoreCase: False OccurrencePositions=> Positions3 Matches=> RegexNC
+            Text.ParseText.RegexParseForFirstOccurrence Text: CurrentString TextToFind: $'''[A-Za-z]{1}[A-Za-z0-9]{1}\\d{2}[A-Za-z]{1}[A-Za-z0-9]{1}''' StartingPosition: 0 IgnoreCase: False OccurrencePosition=> Position Match=> RegexMDL
+            Text.ParseText.RegexParseForFirstOccurrence Text: CurrentString TextToFind: $'''DESTINATION CHARGE''' StartingPosition: 0 IgnoreCase: False OccurrencePosition=> Position2 Match=> RegexDFRT
+            Text.Trim Text: RegexOptionCode TrimOption: Text.TrimOption.Both TrimmedText=> RegexOptionCode
+            IF RegexMDL.Length = 6 THEN
+                SET RegexOptionCode TO $'''*MDL'''
+            END
+            IF RegexDFRT.Length > 4 THEN
+                SET RegexOptionCode TO $'''DFRT'''
+            END
+            BLOCK 'N/C Check'
+ON BLOCK ERROR
+
+END
+                IF IsNotEmpty(RegexNC) THEN
+                    SET Invoice TO 0
+                    SET MSRP TO 0
+                    Text.ToNumber Text: Invoice Number=> InvoiceAsNumber
+                    Text.ToNumber Text: MSRP Number=> MSRPAsNumber
+                    GOTO 'If Escape'
+                END
+            END
+            BLOCK 'Number Check'
+ON BLOCK ERROR
+
+END
+                IF RegexPricing.Count = 1 THEN
+                    SET Invoice TO 1595
+                    SET MSRP TO 1595
+                    Text.ToNumber Text: Invoice Number=> InvoiceAsNumber
+                    Text.ToNumber Text: MSRP Number=> MSRPAsNumber
+                END
+                IF (IsNotEmpty(RegexPricing) AND RegexPricing.Count >= 2) = True THEN
+                    IF RegexPricing[RegexPricing.Count - 1] > RegexPricing[RegexPricing.Count - 2] THEN
+                        SET Invoice TO RegexPricing[RegexPricing.Count - 2]
+                        SET MSRP TO RegexPricing[RegexPricing.Count - 1]
+                    ELSE
+                        SET Invoice TO RegexPricing[RegexPricing.Count - 1]
+                        SET MSRP TO RegexPricing[RegexPricing.Count - 2]
+                    END
+                    Text.ToNumber Text: Invoice Number=> InvoiceAsNumber
+                    Text.ToNumber Text: MSRP Number=> MSRPAsNumber
+                END
+            END
+            LABEL 'If Escape'
+            SET CopiedTextList[CopiedTextListCount] TO $'''%RegexOptionCode%  %RegexPricing[RegexPricing.Count - 1]%  %RegexPricing[RegexPricing.Count - 2]%'''
+            **REGION pcs input
+            BLOCK 'Navigate to Option'
+ON BLOCK ERROR
+    REPEAT BLOCK
+END
+                MouseAndKeyboard.SendKeys.FocusAndSendKeysByControl Control: appmask['Window \'PCS  ... WDDH75/GT]\'']['Pane \'OBWA600Edit\''] TextToSend: RegexOptionCode DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{F5}''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+            END
+            # Check if Option Exists before Blindly trying to enter price records
+            Clipboard.Clear _
+            **REGION does option exist in PCS
+            Clipboard.Clear _
+            MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Tab}{Tab}{Tab}{Tab}{Tab}{Tab}{Tab}{Right}{Control}({C})''' DelayBetweenKeystrokes: 100 SendTextAsHardwareKeys: False
+            Clipboard.GetText Text=> ClipboardText
+            Text.Trim Text: ClipboardText TrimOption: Text.TrimOption.Both TrimmedText=> ClipboardText
+            Text.ChangeCase Text: ClipboardText NewCase: Text.CaseOption.UpperCase Result=> ClipboardText
+            **ENDREGION
+            IF RegexOptionCode <> ClipboardText THEN
+                Variables.AddRowToDataTable.AppendRowToDataTable DataTable: ErrorTable RowToAdd: [InvoiceAsNumber, MSRPAsNumber, RegexOptionCode]
+                Variables.AddItemToList Item: CurrentString List: ErrorDisplayList
+                Variables.RemoveItemFromList.RemoveItemFromListByIndex ItemIndex: CopiedTextListCount List: CopiedTextList
+                NEXT LOOP
+            END
+            MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}(S)i''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+            IF (RadioSelectionForm['price'] = True AND RadioSelectionForm['model'] = False) = $'''true''' THEN
+                BLOCK 'Pricing Window -> Add Record'
+ON BLOCK ERROR
+    NEXT ACTION
+END
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}(P)a''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Tab}%InvoiceAsNumber%{Tab}%MSRPAsNumber%{Return}''' DelayBetweenKeystrokes: 150 SendTextAsHardwareKeys: False
+                    IF (UIAutomation.IfWindow.IsOpen Window: appmask['Window \'PCS  ... STER/TEST]\'']['Window \'Create Record: Pricing\'']) THEN
+                        MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Return}{Alt}({C})''' DelayBetweenKeystrokes: 50 SendTextAsHardwareKeys: False
+                    END
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}(F)c''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                END
+            ELSE IF (RadioSelectionForm['price'] = False AND RadioSelectionForm['model'] = True) = $'''true''' THEN
+                BLOCK 'Pricing Window -> Compare -> Maybe Add Record'
+ON BLOCK ERROR
+    REPEAT BLOCK
+END
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Right}{Right}{Right}{Right}''' DelayBetweenKeystrokes: 50 SendTextAsHardwareKeys: False
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Control}({C})''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: True
+                    WAIT 0.5
+                    Clipboard.GetText Text=> InvoiceCompare
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Right}''' DelayBetweenKeystrokes: 50 SendTextAsHardwareKeys: False
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Control}({C})''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: True
+                    WAIT 0.5
+                    Clipboard.GetText Text=> MSRPCompare
+                    IF (InvoiceAsNumber <> InvoiceCompare OR MSRPAsNumber <> MSRPCompare) = $'''TRUE''' THEN
+                        MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}(P)d''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                        MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Return}''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                        MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}(P)a''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                        MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Tab}%InvoiceAsNumber%{Tab}%MSRPAsNumber%{Return}''' DelayBetweenKeystrokes: 150 SendTextAsHardwareKeys: False
+                    END
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}(F)c''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                END
+            END
+            **ENDREGION
+            Variables.IncreaseVariable Value: CopiedTextListCount IncrementValue: 1
+        END
+        **ENDREGION
+        Text.JoinText.JoinWithDelimiter List: CopiedTextList StandardDelimiter: Text.StandardDelimiter.NewLine DelimiterTimes: CopiedTextList.Count Result=> CopiedTextList
+        Text.JoinText.JoinWithDelimiter List: ErrorDisplayList StandardDelimiter: Text.StandardDelimiter.NewLine DelimiterTimes: ErrorDisplayList.Count Result=> ErrorDisplayList
+        @@statistics_TextBlock: '4'
+@@statistics_Action_Submit: '3'
+Display.ShowCustomDialog CardTemplateJson: '''{
+  \"type\": \"AdaptiveCard\",
+  \"version\": \"1.4\",
+  \"id\": \"AdaptiveCard\",
+  \"body\": [
+    {
+      \"type\": \"TextBlock\",
+      \"id\": \"toplabel\",
+      \"text\": \"${toplabel_Text}\"
+    },
+    {
+      \"type\": \"TextBlock\",
+      \"id\": \"ListContent\",
+      \"weight\": \"bolder\",
+      \"color\": \"good\",
+      \"text\": \"${ListContent_Text}\",
+      \"horizontalAlignment\": \"center\",
+      \"wrap\": true,
+      \"fontType\": \"monospace\"
+    },
+    {
+      \"type\": \"TextBlock\",
+      \"id\": \"label\",
+      \"text\": \"${label_Text}\",
+      \"separator\": true
+    },
+    {
+      \"type\": \"TextBlock\",
+      \"id\": \"badInput\",
+      \"weight\": \"bolder\",
+      \"color\": \"attention\",
+      \"text\": \"${badInput_Text}\",
+      \"horizontalAlignment\": \"center\",
+      \"fontType\": \"monospace\"
+    }
+  ],
+  \"actions\": [
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"add\",
+      \"title\": \"${add_Title}\"
+    },
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"edit\",
+      \"title\": \"${edit_Title}\"
+    },
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"cancel\",
+      \"title\": \"${cancel_Title}\"
+    }
+  ],
+  \"FormTitle\": \"${AdaptiveCard_FormTitle}\"
+}''' CustomFormData=> ListFormData ButtonPressed=> ListButtonPressed @AdaptiveCard_FormTitle: $'''Input Complete''' @toplabel_Text: $'''Successful Input:''' @ListContent_Text: CopiedTextList @label_Text: $'''Failed Input:''' @badInput_Text: ErrorDisplayList @add_Title: $'''Add Another List''' @edit_Title: $'''Repair Failed Input''' @cancel_Title: $'''Done '''
+        IF ListButtonPressed = $'''cancel''' THEN
+            EXIT Code: 0
+        ELSE IF ListButtonPressed = $'''edit''' THEN
+            **REGION add failed pcs options
+            LOOP FOREACH CurrentItem IN ErrorTable
+                @@statistics_Input_Text: '4'
+@@statistics_Input_ChoiceSet: '1'
+@@statistics_Action_Submit: '1'
+Display.ShowCustomDialog CardTemplateJson: '''{
+  \"type\": \"AdaptiveCard\",
+  \"version\": \"1.4\",
+  \"id\": \"AdaptiveCard\",
+  \"body\": [
+    {
+      \"type\": \"Input.Text\",
+      \"id\": \"Option\",
+      \"value\": \"${Option_Value}\",
+      \"isRequired\": true,
+      \"label\": \"${Option_Label}\"
+    },
+    {
+      \"type\": \"Input.Text\",
+      \"id\": \"InvoiceText\",
+      \"value\": \"${InvoiceText_Value}\",
+      \"isRequired\": true,
+      \"label\": \"${InvoiceText_Label}\"
+    },
+    {
+      \"type\": \"Input.Text\",
+      \"id\": \"MSRPText\",
+      \"value\": \"${MSRPText_Value}\",
+      \"isRequired\": true,
+      \"label\": \"${MSRPText_Label}\"
+    },
+    {
+      \"type\": \"Input.Text\",
+      \"id\": \"ShortDescription\",
+      \"isRequired\": true,
+      \"label\": \"${ShortDescription_Label}\",
+      \"errorMessage\": \"${ShortDescription_ErrorMessage}\"
+    },
+    {
+      \"type\": \"Input.ChoiceSet\",
+      \"id\": \"OptionCategory\",
+      \"style\": \"expanded\",
+      \"isMultiSelect\": false,
+      \"choices\": [
+        {
+          \"title\": \"Group\",
+          \"value\": \"GROUP\"
+        },
+        {
+          \"title\": \"Individual Option\",
+          \"value\": \"IND\"
+        },
+        {
+          \"title\": \"Wheels\",
+          \"value\": \"WHEEL\"
+        },
+        {
+          \"title\": \"Tires\",
+          \"value\": \"TIRES\"
+        },
+        {
+          \"title\": \"Radio\",
+          \"value\": \"RADIO\"
+        },
+        {
+          \"title\": \"Exterior Paint\",
+          \"value\": \"EXT\"
+        },
+        {
+          \"title\": \"Interior Trim\",
+          \"value\": \"INT\"
+        }
+      ],
+      \"isRequired\": true,
+      \"label\": \"${OptionCategory_Label}\",
+      \"errorMessage\": \"${OptionCategory_ErrorMessage}\"
+    }
+  ],
+  \"actions\": [
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"submit\",
+      \"title\": \"${submit_Title}\"
+    }
+  ]
+}''' CustomFormData=> OptionInvoiceMSRPForm ButtonPressed=> OptionFormButton @Option_Label: $'''Option Code''' @Option_Value: ErrorTable[0][2] @InvoiceText_Label: $'''Invoice''' @InvoiceText_Value: ErrorTable[0][0] @MSRPText_Label: $'''MSRP''' @MSRPText_Value: ErrorTable[0][1] @ShortDescription_Label: $'''Short Description''' @ShortDescription_ErrorMessage: $'''Please Copy and Paste from Order Guide''' @OptionCategory_Label: $'''Option Category''' @OptionCategory_ErrorMessage: $'''Please select one''' @submit_Title: $'''Submit'''
+                IF OptionFormButton = $'''submit''' THEN
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}({P})a''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''%OptionInvoiceMSRPForm['Option']%{Tab}%OptionInvoiceMSRPForm['ShortDescription']%{Tab}%OptionInvoiceMSRPForm['OptionCategory']%{Tab}MFG{Return}{Alt}({C})''' DelayBetweenKeystrokes: 100 SendTextAsHardwareKeys: True
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeysByControl Control: appmask['Window \'PCS  ... WDDH75/GT]\'']['Pane \'OBWA600Edit\''] TextToSend: $'''%OptionInvoiceMSRPForm['Option']%{F5}''' DelayBetweenKeystrokes: 150 SendTextAsHardwareKeys: False
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Alt}({S})i''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+                    MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Tab}%OptionInvoiceMSRPForm['InvoiceText']%{Tab}%OptionInvoiceMSRPForm['MSRPText']%{Return}''' DelayBetweenKeystrokes: 150 SendTextAsHardwareKeys: False
+                    Variables.DeleteRowFromDataTable DataTable: ErrorTable RowIndex: 0
+                END
+            END
+            Display.ShowMessageDialog.ShowMessage Title: $'''Finished - Good Job''' Message: $'''All jobs successfully completed
+
+Do you wish to continue?
+Press Yes to copy another list of options
+Press No to End''' Icon: Display.Icon.None Buttons: Display.Buttons.YesNo DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> EndButtonPressed
+            IF EndButtonPressed = $'''No''' THEN
+                EXIT Code: 0
+            END
+            **ENDREGION
+        END
+        Variables.ClearList List: CopiedTextList
+        Variables.ClearList List: ErrorDisplayList
+        Variables.ClearDataTable DataTable: ErrorTable
+    END
+END
+
+# [ControlRepository][PowerAutomateDesktop]
+
+{
+  "ControlRepositorySymbols": [
+    {
+      "IgnoreImagesOnSerialization": false,
+      "Repository": "{\r\n  \"Screens\": [\r\n    {\r\n      \"Controls\": [\r\n        {\r\n          \"AutomationProtocol\": \"uia3\",\r\n          \"ScreenShot\": null,\r\n          \"ElementTypeName\": \"Pane\",\r\n          \"InstanceId\": \"cbb3dd82-fe0a-4622-92b6-d36435220b54\",\r\n          \"Name\": \"Pane 'OBWA600Edit'\",\r\n          \"SelectorCount\": 1,\r\n          \"Selectors\": [\r\n            {\r\n              \"CustomSelector\": null,\r\n              \"Elements\": [\r\n                {\r\n                  \"Attributes\": [\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Class\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"MDIClient\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Enabled\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Id\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"59648\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Name\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"Workspace\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": true,\r\n                      \"Name\": \"Ordinal\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": 0\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Process\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"PCSMAIN\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Visible\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    }\r\n                  ],\r\n                  \"CustomValue\": null,\r\n                  \"Ignore\": false,\r\n                  \"Name\": \"Pane 'Workspace'\",\r\n                  \"Tag\": \"pane\"\r\n                },\r\n                {\r\n                  \"Attributes\": [\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Class\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"Afx:00400000:0\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Enabled\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Id\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"65281\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Name\",\r\n                      \"Operation\": \"RegexMatch\",\r\n                      \"Value\": \"^[A-Z]{3,4}/[A-Z]{3,4}/\\\\d{4}/[A-Z0-9]{4,25}/[A-Z0-9]{1,4}$\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": true,\r\n                      \"Name\": \"Ordinal\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": 0\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Process\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"PCSMAIN\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Visible\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    }\r\n                  ],\r\n                  \"CustomValue\": null,\r\n                  \"Ignore\": false,\r\n                  \"Name\": \"Window 'CHR/DOD/2020/WDDH75/GT'\",\r\n                  \"Tag\": \"window\"\r\n                },\r\n                {\r\n                  \"Attributes\": [\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Class\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"OBWA600Edit\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Enabled\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Id\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"191\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Name\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": true,\r\n                      \"Name\": \"Ordinal\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": 0\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Process\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"PCSMAIN\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Visible\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    }\r\n                  ],\r\n                  \"CustomValue\": null,\r\n                  \"Ignore\": false,\r\n                  \"Name\": \"Pane 'OBWA600Edit'\",\r\n                  \"Tag\": \"pane\"\r\n                }\r\n              ],\r\n              \"Ignore\": false,\r\n              \"ImageSelector\": null,\r\n              \"IsCustom\": false,\r\n              \"IsImageBased\": false,\r\n              \"IsWindowsInstance\": false,\r\n              \"Name\": \"Default Selector\",\r\n              \"Properties\": []\r\n            }\r\n          ],\r\n          \"Tag\": \"pane\",\r\n          \"ScreenshotPath\": \"controlRepo-screenshots\\\\d96e942a-650d-48da-8b21-3ec20f9d6820.png\"\r\n        }\r\n      ],\r\n      \"Handle\": {\r\n        \"value\": 0\r\n      },\r\n      \"ProcessName\": null,\r\n      \"ScreenShot\": null,\r\n      \"ElementTypeName\": \"Window\",\r\n      \"InstanceId\": \"67b25d97-1723-4d19-b9e4-394a424a4f82\",\r\n      \"Name\": \"Window 'PCS  ... WDDH75/GT]'\",\r\n      \"SelectorCount\": 1,\r\n      \"Selectors\": [\r\n        {\r\n          \"CustomSelector\": null,\r\n          \"Elements\": [\r\n            {\r\n              \"Attributes\": [\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Class\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": \"AfxMDIFrame80\"\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Enabled\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": true\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Id\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": \"\"\r\n                },\r\n                {\r\n                  \"Ignore\": false,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Name\",\r\n                  \"Operation\": \"Contains\",\r\n                  \"Value\": \"PCS Maintenance [NYPROD] - \"\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": true,\r\n                  \"Name\": \"Ordinal\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": 0\r\n                },\r\n                {\r\n                  \"Ignore\": false,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Process\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": \"PCSMAIN\"\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Visible\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": true\r\n                }\r\n              ],\r\n              \"CustomValue\": null,\r\n              \"Ignore\": false,\r\n              \"Name\": \"Window 'PCS Maintenance [NYPROD] - [CHR/DOD/2020/WDDH75/GT]'\",\r\n              \"Tag\": \"window\"\r\n            }\r\n          ],\r\n          \"Ignore\": false,\r\n          \"ImageSelector\": null,\r\n          \"IsCustom\": false,\r\n          \"IsImageBased\": false,\r\n          \"IsWindowsInstance\": false,\r\n          \"Name\": \"Default Selector\",\r\n          \"Properties\": []\r\n        }\r\n      ],\r\n      \"Tag\": \"window\",\r\n      \"ScreenshotPath\": \"controlRepo-screenshots\\\\0fc29a91-6363-4000-a2f8-35c2fac47ad3.png\"\r\n    },\r\n    {\r\n      \"Controls\": [\r\n        {\r\n          \"AutomationProtocol\": \"uia3\",\r\n          \"ScreenShot\": null,\r\n          \"ElementTypeName\": \"Window\",\r\n          \"InstanceId\": \"608d866c-73dc-4f9c-a010-94a118e56b45\",\r\n          \"Name\": \"Window 'Create Record: Pricing'\",\r\n          \"SelectorCount\": 1,\r\n          \"Selectors\": [\r\n            {\r\n              \"CustomSelector\": null,\r\n              \"Elements\": [\r\n                {\r\n                  \"Attributes\": [\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Class\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"#32770\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Enabled\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": false\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Id\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Name\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"Create Record: Pricing\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": true,\r\n                      \"Name\": \"Ordinal\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": 0\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Process\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"PCSMAIN\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Visible\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    }\r\n                  ],\r\n                  \"CustomValue\": null,\r\n                  \"Ignore\": false,\r\n                  \"Name\": \"Window 'Create Record: Pricing'\",\r\n                  \"Tag\": \"window\"\r\n                },\r\n                {\r\n                  \"Attributes\": [\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Class\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"#32770\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Enabled\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Id\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": false,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Name\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"Create Record: Pricing\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": true,\r\n                      \"Name\": \"Ordinal\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": 0\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Process\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": \"PCSMAIN\"\r\n                    },\r\n                    {\r\n                      \"Ignore\": true,\r\n                      \"IsOrdinal\": false,\r\n                      \"Name\": \"Visible\",\r\n                      \"Operation\": \"EqualTo\",\r\n                      \"Value\": true\r\n                    }\r\n                  ],\r\n                  \"CustomValue\": null,\r\n                  \"Ignore\": false,\r\n                  \"Name\": \"Window 'Create Record: Pricing'\",\r\n                  \"Tag\": \"window\"\r\n                }\r\n              ],\r\n              \"Ignore\": false,\r\n              \"ImageSelector\": null,\r\n              \"IsCustom\": false,\r\n              \"IsImageBased\": false,\r\n              \"IsWindowsInstance\": false,\r\n              \"Name\": \"Default Selector\",\r\n              \"Properties\": []\r\n            }\r\n          ],\r\n          \"Tag\": \"window\",\r\n          \"ScreenshotPath\": \"controlRepo-screenshots\\\\c632a0f0-ba97-4ee0-8d0a-4309be73d5d4.png\"\r\n        }\r\n      ],\r\n      \"Handle\": {\r\n        \"value\": 0\r\n      },\r\n      \"ProcessName\": null,\r\n      \"ScreenShot\": null,\r\n      \"ElementTypeName\": \"Window\",\r\n      \"InstanceId\": \"ece40408-f4b5-4a23-ae95-f55c9e573090\",\r\n      \"Name\": \"Window 'PCS  ... STER/TEST]'\",\r\n      \"SelectorCount\": 1,\r\n      \"Selectors\": [\r\n        {\r\n          \"CustomSelector\": null,\r\n          \"Elements\": [\r\n            {\r\n              \"Attributes\": [\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Class\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": \"AfxMDIFrame80\"\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Enabled\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": false\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Id\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": \"\"\r\n                },\r\n                {\r\n                  \"Ignore\": false,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Name\",\r\n                  \"Operation\": \"Contains\",\r\n                  \"Value\": \"PCS Maintenance [NYPROD] - \"\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": true,\r\n                  \"Name\": \"Ordinal\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": 0\r\n                },\r\n                {\r\n                  \"Ignore\": false,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Process\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": \"PCSMAIN\"\r\n                },\r\n                {\r\n                  \"Ignore\": true,\r\n                  \"IsOrdinal\": false,\r\n                  \"Name\": \"Visible\",\r\n                  \"Operation\": \"EqualTo\",\r\n                  \"Value\": true\r\n                }\r\n              ],\r\n              \"CustomValue\": null,\r\n              \"Ignore\": false,\r\n              \"Name\": \"Window 'PCS Maintenance [NYPROD] - [CHR/DOD/2025/TESTER/TEST]'\",\r\n              \"Tag\": \"window\"\r\n            }\r\n          ],\r\n          \"Ignore\": false,\r\n          \"ImageSelector\": null,\r\n          \"IsCustom\": false,\r\n          \"IsImageBased\": false,\r\n          \"IsWindowsInstance\": false,\r\n          \"Name\": \"Default Selector\",\r\n          \"Properties\": []\r\n        }\r\n      ],\r\n      \"Tag\": \"window\",\r\n      \"ScreenshotPath\": \"controlRepo-screenshots\\\\8bd50ef2-04f5-419c-89b3-7949def48b3d.png\"\r\n    }\r\n  ],\r\n  \"Version\": 1\r\n}",
+      "ImportMetadata": {
+        "DisplayName": "Local computer",
+        "ConnectionString": "",
+        "Type": "Local",
+        "DesktopType": "local"
+      },
+      "Name": "appmask"
+    }
+  ],
+  "ImageRepositorySymbol": {
+    "Repository": "{\r\n  \"Folders\": [],\r\n  \"Images\": [],\r\n  \"Version\": 1\r\n}",
+    "ImportMetadata": {},
+    "Name": "imgrepo"
+  },
+  "ConnectionReferences": []
+}

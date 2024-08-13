@@ -1,0 +1,88 @@
+@@statistics_Input_Toggle: '2'
+@@statistics_Input_ChoiceSet: '1'
+@@statistics_Action_Submit: '2'
+Display.ShowCustomDialog CardTemplateJson: '''{
+  \"type\": \"AdaptiveCard\",
+  \"version\": \"1.4\",
+  \"id\": \"AdaptiveCard\",
+  \"body\": [
+    {
+      \"type\": \"Input.Toggle\",
+      \"id\": \"full\",
+      \"title\": \"${full_Title}\",
+      \"valueOn\": \"${full_ValueOn}\",
+      \"valueOff\": \"${full_ValueOff}\"
+    },
+    {
+      \"type\": \"Input.Toggle\",
+      \"id\": \"date\",
+      \"title\": \"${date_Title}\",
+      \"valueOn\": \"${date_ValueOn}\",
+      \"valueOff\": \"${date_ValueOff}\"
+    },
+    {
+      \"type\": \"Input.ChoiceSet\",
+      \"id\": \"division\",
+      \"style\": \"expanded\",
+      \"isMultiSelect\": false,
+      \"choices\": [
+        {
+          \"title\": \"Ford\",
+          \"value\": \"ford\"
+        },
+        {
+          \"title\": \"Chrysler / Stellantis\",
+          \"value\": \"chr\"
+        },
+        {
+          \"title\": \"Audi\",
+          \"value\": \"audi\"
+        },
+        {
+          \"title\": \"Volkswagen\",
+          \"value\": \"vw\"
+        }
+      ],
+      \"isRequired\": true,
+      \"label\": \"${division_Label}\",
+      \"errorMessage\": \"${division_ErrorMessage}\",
+      \"separator\": true
+    }
+  ],
+  \"actions\": [
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"submit\",
+      \"title\": \"${submit_Title}\"
+    },
+    {
+      \"type\": \"Action.Submit\",
+      \"id\": \"cancel\",
+      \"associatedInputs\": \"none\",
+      \"title\": \"${cancel_Title}\",
+      \"IsCancel\": true
+    }
+  ]
+}''' CustomFormData=> HubFormData ButtonPressed=> HubButtonPressed @full_Title: $'''Full Walk-through Mode''' @full_ValueOn: $'''True''' @full_ValueOff: $'''False''' @date_Title: $'''Set Effective Date''' @date_ValueOn: $'''True''' @date_ValueOff: $'''False''' @division_Label: $'''Select Division to work with''' @division_ErrorMessage: $'''Please select one''' @submit_Title: $'''Submit''' @cancel_Title: $'''Cancel'''
+Display.ShowMessageDialog.ShowMessage Title: $'''Ready, Set, Go!''' Message: $'''Highlight 1 Option Code and it\'s Invoice + MSRP
+
+Press \'Ctrl + C\' to add your selection to your list
+Repeat as many times as necessary
+
+Insert your list into the PCS Tables''' Icon: Display.Icon.Information Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed
+SWITCH HubFormData['division']
+    CASE = $'''ford'''
+        @@flowname: 'PCS Maintenance - Ford'
+External.RunFlow FlowId: 'a9e5e916-9f55-ef11-a316-000d3a3753ae'
+    CASE = $'''chr'''
+        @@flowname: 'PCS Maintenance - Stellantis'
+External.RunFlow FlowId: 'f6855380-4353-ef11-a316-000d3a3753ae'
+    CASE = $'''audi'''
+        @@flowname: 'PCS Maintenance - Audi'
+External.RunFlow FlowId: 'aaf01724-9f55-ef11-a316-000d3a3753ae'
+    CASE = $'''vw'''
+        @@flowname: 'PCS Maintenance - VW'
+External.RunFlow FlowId: '963fca2a-9f55-ef11-a316-000d3a3753ae'
+    DEFAULT
+        EXIT Code: 0
+END
